@@ -1,190 +1,309 @@
-// BLS Term 4 Punctuality Pledge — backend
-// Deploy as Web App (Execute as: Me, Who has access: Anyone), then paste the
-// resulting /exec URL into CONFIG.WEBAPP_URL in both student-pledge-form.html
-// and teacher-pledge-dashboard.html.
-
-var SHEET_SUGGESTIONS = 'Suggestions';
-var SHEET_VOTES = 'Votes';
-var SHEET_PLEDGES = 'Pledges';
-
-// Change this before deploying. Required for any data-clearing action
-// (per-CCA clear and whole-school reset). This is a soft deterrent, not
-// real security — anyone who knows it (or intercepts a request) can use
-// it, since this script has no login system.
-var ADMIN_PASSWORD = 'BlsSMT2026!';
-
-function getSheet_(name, headers) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(name);
-  if (!sheet) {
-    sheet = ss.insertSheet(name);
-    sheet.appendRow(headers);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Term 4 punctuality pledge — teacher dashboard</title>
+<style>
+  :root{
+    --maroon:#8f2039;
+    --maroon-dark:#6e1830;
+    --navy:#1d3557;
+    --cream:#faf8f4;
+    --ink:#22262b;
+    --muted:#6b7280;
+    --border:#e5e1da;
+    --surface:#ffffff;
+    --success:#1f7a4d;
+    --success-bg:#eaf5ee;
+    --radius:10px;
   }
-  return sheet;
-}
-
-function suggestionsSheet_() {
-  return getSheet_(SHEET_SUGGESTIONS, ['Timestamp', 'SessionId', 'Name', 'CCA', 'Trigger', 'Minutes', 'Reason', 'Sentence', 'Key']);
-}
-function votesSheet_() {
-  return getSheet_(SHEET_VOTES, ['Timestamp', 'SessionId', 'Name', 'CCA', 'Key']);
-}
-function pledgesSheet_() {
-  return getSheet_(SHEET_PLEDGES, ['CCA', 'Sentence', 'ConfirmedAt']);
-}
-
-function normalizeKey_(sentence) {
-  return String(sentence).trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-function doPost(e) {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    var body = JSON.parse(e.postData.contents);
-    var action = body.action;
-    var result;
-    if (action === 'submitSuggestion') result = handleSubmitSuggestion_(body);
-    else if (action === 'submitVotes') result = handleSubmitVotes_(body);
-    else if (action === 'resetSession') result = handleResetSession_(body);
-    else if (action === 'confirmPledge') result = handleConfirmPledge_(body);
-    else if (action === 'clearAllCCA') result = handleClearAllCCA_(body);
-    else if (action === 'clearAllSchool') result = handleClearAllSchool_(body);
-    else result = { ok: false, error: 'Unknown action' };
-    return outputJson_(result);
-  } catch (err) {
-    return outputJson_({ ok: false, error: String(err) });
-  } finally {
-    lock.releaseLock();
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+    color:var(--ink);
+    background:var(--cream);
+    min-height:100vh;
   }
-}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 20px 64px;}
+  header{margin-bottom:20px;}
+  header .eyebrow{color:var(--maroon);font-weight:600;font-size:13px;}
+  header h1{font-size:22px;margin:4px 0 2px;color:var(--navy);}
+  header .school{color:var(--muted);font-size:13px;}
 
-function handleSubmitSuggestion_(body) {
-  var sheet = suggestionsSheet_();
-  var key = normalizeKey_(body.sentence);
-  sheet.appendRow([new Date(), body.sessionId, body.name, body.cca, body.trigger, body.minutes, body.reason, body.sentence, key]);
-  return { ok: true, key: key };
-}
+  .tabs{display:flex;gap:8px;margin:20px 0;}
+  .tab-btn{
+    padding:8px 16px;border-radius:8px;border:1px solid var(--border);
+    background:#fff;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;
+  }
+  .tab-btn.active{background:var(--navy);border-color:var(--navy);color:#fff;}
 
-function handleSubmitVotes_(body) {
-  var sheet = votesSheet_();
-  var keys = body.keys || [];
-  keys.forEach(function (k) {
-    sheet.appendRow([new Date(), body.sessionId, body.name, body.cca, k]);
+  select{
+    padding:10px 12px;font-size:15px;border:1px solid var(--border);
+    border-radius:8px;background:#fff;color:var(--ink);font-family:inherit;
+    width:100%;margin-bottom:16px;
+  }
+
+  .pledge-banner{
+    background:var(--success-bg);
+    border:1px solid var(--success);
+    border-radius:12px;
+    padding:14px 16px;
+    margin-bottom:16px;
+    display:none;
+  }
+  .pledge-banner.visible{display:block;}
+  .pledge-banner .label{font-size:12px;color:var(--success);font-weight:600;margin-bottom:4px;}
+  .pledge-banner .sentence{font-size:15px;color:var(--navy);line-height:1.5;}
+  .pledge-banner .meta{font-size:12px;color:var(--muted);margin-top:6px;}
+
+  .stats{display:flex;gap:12px;margin-bottom:16px;}
+  .stat{
+    flex:1;background:#fff;border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;
+  }
+  .stat .n{font-size:20px;font-weight:600;color:var(--navy);}
+  .stat .l{font-size:12px;color:var(--muted);}
+
+  .suggestion{
+    background:#fff;border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;margin-bottom:10px;
+  }
+  .suggestion.leading{border:2px solid var(--maroon);}
+  .suggestion .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;}
+  .suggestion .text{font-size:14px;line-height:1.5;}
+  .suggestion .votes-badge{
+    flex-shrink:0;font-size:12px;font-weight:600;color:var(--maroon);
+    background:#fbf0f2;padding:3px 10px;border-radius:20px;white-space:nowrap;
+  }
+  .suggestion .authors{font-size:12px;color:var(--muted);margin-top:8px;}
+  .suggestion .confirm-btn{
+    margin-top:10px;font-size:13px;padding:6px 12px;border-radius:6px;
+    border:1px solid var(--navy);background:#fff;color:var(--navy);cursor:pointer;font-weight:600;
+  }
+  .suggestion .confirm-btn:hover{background:var(--navy);color:#fff;}
+  .suggestion .confirm-btn.is-confirmed{
+    background:var(--success);border-color:var(--success);color:#fff;cursor:default;
+  }
+
+  .empty{color:var(--muted);font-size:14px;padding:20px 0;text-align:center;}
+
+  .admin-row{margin-top:28px;padding-top:16px;border-top:1px solid var(--border);}
+  .admin-row button{
+    font-size:13px;padding:8px 14px;border-radius:6px;border:1px solid var(--border);
+    background:#fff;color:var(--muted);cursor:pointer;
+  }
+  .admin-row button:hover{border-color:#b3261e;color:#b3261e;}
+
+  .overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .overview-card{
+    background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+  }
+  .overview-card .cca{font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px;}
+  .overview-card .pledge{font-size:12px;color:var(--ink);line-height:1.4;margin-bottom:6px;}
+  .overview-card .none{font-size:12px;color:var(--muted);font-style:italic;margin-bottom:6px;}
+  .overview-card .counts{font-size:11px;color:var(--muted);}
+
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Teacher only — not for student use</div>
+    <h1>Term 4 punctuality pledge dashboard</h1>
+    <div class="school">Boon Lay Secondary School</div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-cca">By CCA</button>
+    <button class="tab-btn" id="tab-overview">Whole-school overview</button>
+  </div>
+
+  <!-- CCA view -->
+  <div id="view-cca">
+    <select id="cca-select"><option value="">Select a CCA</option></select>
+
+    <div class="pledge-banner" id="pledge-banner">
+      <div class="label">Confirmed pledge</div>
+      <div class="sentence" id="pledge-sentence"></div>
+      <div class="meta" id="pledge-meta"></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="n" id="stat-suggestions">–</div><div class="l">suggestions</div></div>
+      <div class="stat"><div class="n" id="stat-votes">–</div><div class="l">votes cast</div></div>
+    </div>
+
+    <div id="suggestion-list"></div>
+
+    <div class="admin-row">
+      <button id="clear-cca-btn">Clear all data for this CCA</button>
+    </div>
+  </div>
+
+  <!-- Overview -->
+  <div id="view-overview" class="hidden">
+    <div class="overview-grid" id="overview-grid"></div>
+  </div>
+</div>
+
+<script>
+  var CONFIG = { WEBAPP_URL: "https://script.google.com/macros/s/AKfycbwEFko_4D9_xVA2i1SKa8z8UYF2OvQzrNt-UFQ6Id3sCR6kJ8uokB365xxETqnoJoX6/exec" };
+  var CCAS = ["AVA","CYBERACE","BADMINTON","BASKETBALL","NETBALL","BOY'S BRIGADE","NCC","NCDCC","NPCC","SJB","CO","CHOIR","CONCERT BAND","CONTEMPORARY DANCE","MALAY DANCE","MUSICAL THEATRE"];
+  var POLL_MS = 5000;
+  var pollTimer = null;
+  var currentCCA = '';
+
+  var ccaSelect = document.getElementById('cca-select');
+  CCAS.forEach(function(c){
+    var opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    ccaSelect.appendChild(opt);
   });
-  return { ok: true };
-}
 
-function handleResetSession_(body) {
-  deleteRowsByValue_(suggestionsSheet_(), body.sessionId, 1);
-  deleteRowsByValue_(votesSheet_(), body.sessionId, 1);
-  return { ok: true };
-}
+  function get(params){
+    var url = CONFIG.WEBAPP_URL + '?' + Object.keys(params).map(function(k){
+      return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+    }).join('&');
+    return fetch(url).then(function(r){ return r.json(); });
+  }
+  function post(payload){
+    return fetch(CONFIG.WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); });
+  }
 
-function deleteRowsByValue_(sheet, value, colIndex) {
-  var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i >= 1; i--) {
-    if (data[i][colIndex] === value) {
-      sheet.deleteRow(i + 1);
+  // ---- tabs ----
+  document.getElementById('tab-cca').addEventListener('click', function(){
+    setTab('cca');
+  });
+  document.getElementById('tab-overview').addEventListener('click', function(){
+    setTab('overview');
+  });
+  function setTab(name){
+    document.getElementById('tab-cca').classList.toggle('active', name === 'cca');
+    document.getElementById('tab-overview').classList.toggle('active', name === 'overview');
+    document.getElementById('view-cca').classList.toggle('hidden', name !== 'cca');
+    document.getElementById('view-overview').classList.toggle('hidden', name !== 'overview');
+    clearInterval(pollTimer);
+    if (name === 'cca'){
+      if (currentCCA) startCCAPolling();
+    } else {
+      loadOverview();
+      pollTimer = setInterval(loadOverview, POLL_MS);
     }
   }
-}
 
-function handleConfirmPledge_(body) {
-  var sheet = pledgesSheet_();
-  var data = sheet.getDataRange().getValues();
-  var rowIndex = -1;
-  for (var i = 1; i < data.length; i++) {
-    if (data[i][0] === body.cca) { rowIndex = i + 1; break; }
+  // ---- CCA view ----
+  ccaSelect.addEventListener('change', function(){
+    currentCCA = ccaSelect.value;
+    clearInterval(pollTimer);
+    if (currentCCA) startCCAPolling();
+    else {
+      document.getElementById('suggestion-list').innerHTML = '';
+      document.getElementById('pledge-banner').classList.remove('visible');
+    }
+  });
+  function startCCAPolling(){
+    loadCCA();
+    pollTimer = setInterval(loadCCA, POLL_MS);
   }
-  var row = [body.cca, body.sentence, new Date()];
-  if (rowIndex > -1) sheet.getRange(rowIndex, 1, 1, 3).setValues([row]);
-  else sheet.appendRow(row);
-  return { ok: true };
-}
-
-function handleClearAllCCA_(body) {
-  if (body.password !== ADMIN_PASSWORD) return { ok: false, error: 'Incorrect password' };
-  deleteRowsByValue_(suggestionsSheet_(), body.cca, 3);
-  deleteRowsByValue_(votesSheet_(), body.cca, 3);
-  deleteRowsByValue_(pledgesSheet_(), body.cca, 0);
-  return { ok: true };
-}
-
-function handleClearAllSchool_(body) {
-  if (body.password !== ADMIN_PASSWORD) return { ok: false, error: 'Incorrect password' };
-  clearAllRows_(suggestionsSheet_());
-  clearAllRows_(votesSheet_());
-  clearAllRows_(pledgesSheet_());
-  return { ok: true };
-}
-
-function clearAllRows_(sheet) {
-  var lastRow = sheet.getLastRow();
-  if (lastRow > 1) sheet.deleteRows(2, lastRow - 1);
-}
-
-function doGet(e) {
-  var action = e.parameter.action;
-  if (action === 'state') return outputJson_(getState_(e.parameter.cca));
-  if (action === 'overview') return outputJson_(getOverview_());
-  return outputJson_({ ok: false, error: 'Unknown action' });
-}
-
-function outputJson_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
-
-// Merged, vote-counted suggestion list for one CCA, plus its confirmed pledge if any.
-function getState_(cca) {
-  var sData = suggestionsSheet_().getDataRange().getValues();
-  var vData = votesSheet_().getDataRange().getValues();
-  var pData = pledgesSheet_().getDataRange().getValues();
-
-  var byKey = {};
-  for (var i = 1; i < sData.length; i++) {
-    var srow = sData[i];
-    if (srow[3] !== cca) continue;
-    var key = srow[8];
-    if (!byKey[key]) byKey[key] = { key: key, sentence: srow[7], votes: 0, authors: [] };
-    byKey[key].authors.push(srow[2]);
+  function loadCCA(){
+    if (!currentCCA) return;
+    get({ action: 'state', cca: currentCCA }).then(function(res){
+      if (!res.ok) return;
+      renderPledgeBanner(res.pledge);
+      renderStats(res.suggestions);
+      renderSuggestions(res.suggestions, res.pledge);
+    });
   }
-  for (var j = 1; j < vData.length; j++) {
-    var vrow = vData[j];
-    if (vrow[3] !== cca) continue;
-    var vkey = vrow[4];
-    if (byKey[vkey]) byKey[vkey].votes += 1;
+  function renderPledgeBanner(pledge){
+    var banner = document.getElementById('pledge-banner');
+    if (!pledge){ banner.classList.remove('visible'); return; }
+    banner.classList.add('visible');
+    document.getElementById('pledge-sentence').textContent = pledge.sentence;
+    var d = new Date(pledge.confirmedAt);
+    document.getElementById('pledge-meta').textContent = 'Confirmed ' + d.toLocaleString();
   }
-  var suggestions = Object.keys(byKey).map(function (k) { return byKey[k]; });
-  suggestions.sort(function (a, b) { return b.votes - a.votes; });
+  function renderStats(suggestions){
+    var totalSuggestions = suggestions.length;
+    var totalVotes = suggestions.reduce(function(sum, s){ return sum + s.votes; }, 0);
+    document.getElementById('stat-suggestions').textContent = totalSuggestions;
+    document.getElementById('stat-votes').textContent = totalVotes;
+  }
+  function renderSuggestions(suggestions, pledge){
+    var list = document.getElementById('suggestion-list');
+    if (!suggestions.length){
+      list.innerHTML = '<div class="empty">No suggestions submitted yet for this CCA.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    suggestions.forEach(function(s, i){
+      var isLeading = i === 0 && s.votes > 0;
+      var isConfirmed = pledge && pledge.sentence === s.sentence;
+      var card = document.createElement('div');
+      card.className = 'suggestion' + (isLeading ? ' leading' : '');
+      var authorsUnique = Array.from(new Set(s.authors));
+      card.innerHTML =
+        '<div class="top">' +
+          '<div class="text"></div>' +
+          '<div class="votes-badge"></div>' +
+        '</div>' +
+        '<div class="authors"></div>' +
+        '<button class="confirm-btn"></button>';
+      card.querySelector('.text').textContent = s.sentence;
+      card.querySelector('.votes-badge').textContent = s.votes + (s.votes === 1 ? ' vote' : ' votes');
+      card.querySelector('.authors').textContent = 'Suggested by ' + authorsUnique.join(', ');
+      var btn = card.querySelector('.confirm-btn');
+      if (isConfirmed){
+        btn.textContent = 'Confirmed as pledge';
+        btn.classList.add('is-confirmed');
+      } else {
+        btn.textContent = 'Confirm as pledge';
+        btn.addEventListener('click', function(){
+          btn.disabled = true; btn.textContent = 'Confirming…';
+          post({ action: 'confirmPledge', cca: currentCCA, sentence: s.sentence }).then(function(){
+            loadCCA();
+          });
+        });
+      }
+      list.appendChild(card);
+    });
+  }
 
-  var pledge = null;
-  for (var p = 1; p < pData.length; p++) {
-    if (pData[p][0] === cca) { pledge = { sentence: pData[p][1], confirmedAt: pData[p][2] }; break; }
-  }
-  return { ok: true, suggestions: suggestions, pledge: pledge };
-}
+  document.getElementById('clear-cca-btn').addEventListener('click', function(){
+    if (!currentCCA){ alert('Select a CCA first.'); return; }
+    var ok = window.confirm('This permanently deletes every suggestion, vote, and confirmed pledge for ' + currentCCA + '. Continue?');
+    if (!ok) return;
+    post({ action: 'clearAllCCA', cca: currentCCA }).then(function(){ loadCCA(); });
+  });
 
-// Per-CCA participation counts and confirmed pledges, for the teacher overview tab.
-function getOverview_() {
-  var sData = suggestionsSheet_().getDataRange().getValues();
-  var vData = votesSheet_().getDataRange().getValues();
-  var pData = pledgesSheet_().getDataRange().getValues();
-
-  var counts = {};
-  for (var i = 1; i < sData.length; i++) {
-    var cca = sData[i][3];
-    counts[cca] = counts[cca] || { suggestions: 0, votes: 0 };
-    counts[cca].suggestions++;
+  // ---- Overview ----
+  function loadOverview(){
+    get({ action: 'overview' }).then(function(res){
+      if (!res.ok) return;
+      var grid = document.getElementById('overview-grid');
+      grid.innerHTML = '';
+      CCAS.forEach(function(cca){
+        var pledge = res.pledges[cca];
+        var counts = res.counts[cca] || { suggestions: 0, votes: 0 };
+        var card = document.createElement('div');
+        card.className = 'overview-card';
+        card.innerHTML =
+          '<div class="cca"></div>' +
+          (pledge ? '<div class="pledge"></div>' : '<div class="none">No pledge confirmed yet</div>') +
+          '<div class="counts"></div>';
+        card.querySelector('.cca').textContent = cca;
+        if (pledge) card.querySelector('.pledge').textContent = pledge.sentence;
+        card.querySelector('.counts').textContent = counts.suggestions + ' suggestions · ' + counts.votes + ' votes';
+        grid.appendChild(card);
+      });
+    });
   }
-  for (var j = 1; j < vData.length; j++) {
-    var vcca = vData[j][3];
-    counts[vcca] = counts[vcca] || { suggestions: 0, votes: 0 };
-    counts[vcca].votes++;
-  }
-  var pledges = {};
-  for (var p = 1; p < pData.length; p++) {
-    pledges[pData[p][0]] = { sentence: pData[p][1], confirmedAt: pData[p][2] };
-  }
-  return { ok: true, counts: counts, pledges: pledges };
-}
+</script>
+</body>
+</html>
