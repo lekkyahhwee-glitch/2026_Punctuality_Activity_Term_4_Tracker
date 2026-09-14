@@ -145,6 +145,9 @@
 
   <!-- Overview -->
   <div id="view-overview" class="hidden">
+    <div class="admin-row" style="margin-top:0;padding-top:0;border-top:none;margin-bottom:16px;">
+      <button id="clear-school-btn">Reset all CCAs (whole school)</button>
+    </div>
     <div class="overview-grid" id="overview-grid"></div>
   </div>
 </div>
@@ -279,7 +282,29 @@
     if (!currentCCA){ alert('Select a CCA first.'); return; }
     var ok = window.confirm('This permanently deletes every suggestion, vote, and confirmed pledge for ' + currentCCA + '. Continue?');
     if (!ok) return;
-    post({ action: 'clearAllCCA', cca: currentCCA }).then(function(){ loadCCA(); });
+    var password = window.prompt('Enter the admin password to confirm:');
+    if (password === null) return;
+    post({ action: 'clearAllCCA', cca: currentCCA, password: password }).then(function(res){
+      if (!res.ok){ alert(res.error === 'Incorrect password' ? 'Incorrect password — nothing was deleted.' : "Couldn't reach the server. Nothing was deleted."); return; }
+      loadCCA();
+    }).catch(function(){
+      alert("Couldn't reach the server. Nothing was deleted.");
+    });
+  });
+
+  document.getElementById('clear-school-btn').addEventListener('click', function(){
+    var ok = window.confirm('This permanently deletes EVERY suggestion, vote, and confirmed pledge for ALL CCAs in the whole school. This cannot be undone. Continue?');
+    if (!ok) return;
+    var confirmText = window.prompt('Type RESET ALL (in capitals) to confirm:');
+    if (confirmText !== 'RESET ALL') { if (confirmText !== null) alert('Text did not match. Nothing was deleted.'); return; }
+    var password = window.prompt('Enter the admin password to confirm:');
+    if (password === null) return;
+    post({ action: 'clearAllSchool', password: password }).then(function(res){
+      if (!res.ok){ alert(res.error === 'Incorrect password' ? 'Incorrect password — nothing was deleted.' : "Couldn't reach the server. Nothing was deleted."); return; }
+      loadOverview();
+    }).catch(function(){
+      alert("Couldn't reach the server. Nothing was deleted.");
+    });
   });
 
   // ---- Overview ----
